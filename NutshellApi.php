@@ -31,6 +31,8 @@
 class NutshellApi {
 	const ENDPOINT_DISCOVER_URL = 'http://api.nutshell.com/v1/json';
 	protected $curl = NULL;
+	protected $logPath = NULL;
+	protected $logUniqId = NULL;
 	
 	/**
 	 * Initializes the API access class. Takes care of endpoint discovery.
@@ -39,7 +41,7 @@ class NutshellApi {
 	 * @param string $apiKey
 	 * @throws NutshellApiException if either parameter is invalid
 	 */
-	function __construct($username, $apiKey) {
+	function __construct($username, $apiKey, $logPath = null) {
 		if (!is_string($username) || !is_string($apiKey)) {
 			throw new NutshellApiException('You must specify a username and API key.');
 		}
@@ -48,6 +50,10 @@ class NutshellApi {
 		}
 		if (strlen($apiKey) <= 12) {
 			throw new NutshellApiException('API key is not long enough to be a valid key.');
+		}
+		if (!is_null($logPath))
+		{
+			$this->logPath = $logPath;
 		}
 		
 		$endpoint   = $this->_getApiEndpointForUser($username);
@@ -120,8 +126,11 @@ class NutshellApi {
 		curl_setopt($this->curl, CURLOPT_POSTFIELDS, $this->json_encode($payload));
 		$fullResult = curl_exec($this->curl);
 		if (curl_errno($this->curl)) {
-			throw new NutshellApiException('Curl error #' . curl_errno($this->curl) . ' during API call: '. curl_error($this->curl));
+			$curlFailure = 'Curl error #' . curl_errno($this->curl) . ' during API call: '. curl_error($this->curl);
+			$this->_logCall($method, $params, $curlFailure);
+			throw new NutshellApiException($curlFailure);
 		}
+		$this->_logCall($method, $params, $fullResult);
 		$fullResult = $this->json_decode($fullResult);
 		
 		if ($fullResult->error !== NULL) {
@@ -131,6 +140,32 @@ class NutshellApi {
 		return $fullResult->result;
 	}
 	
+	protected function _logCall($method, array $params, $result) {
+		if (empty($this->logPath)) {
+			return false;
+		}
+		if (is_null($this->logUniqId)) {
+			$this->logUniqId = uniqid();
+		}
+		$fhandle = fopen($this->logPath, 'a');
+		if (!is_resource($fhandle)) {
+			return false;
+		}
+		$log = sprintf(
+			'[host:%s] [id:%s] [ts:%u] "%s" %s(%s): %s'
+			, php_uname('n')
+			, $this->logUniqId
+			, time()
+			, date('c')
+			, $method
+			, $this->json_encode($params)
+			, $result
+		).PHP_EOL;
+		$written = fwrite($fhandle, $log);
+		fclose($fhandle);
+		return $written;
+	}
+
 	/**
 	 * Finds the appropriate API endpoint for the given user.
 	 * 
